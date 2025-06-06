@@ -1,0 +1,11 @@
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Temp\SkillGems\SkillGems.deps.json
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Temp\SkillGems\SkillGems.dll
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.csproj.AssemblyReference.cache
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.AssemblyInfoInputs.cache
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.AssemblyInfo.cs
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.csproj.CoreCompileInputs.cache
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.sourcelink.json
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\SkillGems.dll
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\refint\SkillGems.dll
+C:\Users\Admin\Desktop\ExileApi-Compiled-3.25-phrecia-2\Plugins\Source\SkillGems\obj\Debug\net8.0-windows\win-x64\ref\SkillGems.dll
