@@ -1,4 +1,4 @@
-﻿using ExileCore;
+using ExileCore;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.Shared.Helpers;
@@ -12,24 +12,33 @@ namespace SkillGems
 {
     public class SkillGems : BaseSettingsPlugin<SkillGemsSettings>
     {
-        private CancellationTokenSource _gemLevelingCts;
-        private Task _gemLevelingTask;
+        private CancellationTokenSource _autoGemLevelingCts;
+        private Task _autoGemLevelingTask;
+
+        private CancellationTokenSource _hotkeyGemLevelingCts;
+        private Task _hotkeyGemLevelingTask;
+
         private Vector2 _mousePosition;
 
         public override bool Initialise()
         {
-            Input.RegisterKey(Settings.Run); // Keep this if you want the manual hotkey
+            Input.RegisterKey(Settings.Run);
             return true;
         }
 
-        public void Enable()
+        public override void OnLoad()
         {
-            _gemLevelingCts = new CancellationTokenSource();
         }
 
-        public void Disable()
+        public override void OnUnload()
         {
-            _gemLevelingCts.Cancel();
+            _autoGemLevelingCts?.Cancel();
+            _autoGemLevelingCts?.Dispose();
+            _autoGemLevelingTask?.Wait();
+
+            _hotkeyGemLevelingCts?.Cancel();
+            _hotkeyGemLevelingCts?.Dispose();
+            _hotkeyGemLevelingTask?.Wait();
         }
 
         private void SetCursorPos(Vector2 v)
@@ -44,44 +53,55 @@ namespace SkillGems
 
         public override Job Tick()
         {
-            // --- NEW: Check if auto-leveling is enabled via settings ---
-            // If the auto-leveling toggle is OFF, cancel any running task and stop here.
-            if (!Settings.EnableAutoLevelUp.Value)
+            if (Settings.EnableAutoLevelUp.Value)
             {
-                _gemLevelingCts?.Cancel();
-                return null;
+                if (CanTick() && IsPlayerAlive() && AnythingToLevel() && PanelVisible() && _autoGemLevelingTask == null)
+                {
+                    _mousePosition = Input.MousePositionNum;
+                    _autoGemLevelingCts = new CancellationTokenSource();
+                    _autoGemLevelingTask = Task.Run(() => BeginGemLevel(_autoGemLevelingCts.Token), _autoGemLevelingCts.Token);
+                    _autoGemLevelingTask.ContinueWith((task) =>
+                    {
+                        _autoGemLevelingTask = null;
+                        _autoGemLevelingCts?.Dispose();
+                        if (Settings.ReturnMouseToStart.Value)
+                        {
+                            SetCursorPos(_mousePosition);
+                        }
+                    }, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.NotOnCanceled);
+                }
+                else if (!CanTick() || !IsPlayerAlive() || !PanelVisible() || !AnythingToLevel())
+                {
+                    _autoGemLevelingCts?.Cancel();
+                }
             }
-            // --- END NEW ---
+            else
+            {
+                _autoGemLevelingCts?.Cancel();
+            }
 
-            // Old logic for manual key press. If you want *only* auto, you can remove this.
-            // If you want both manual and auto, this checks if the manual key is active.
             if (Input.IsKeyDown(Settings.Run.Value))
             {
-                // If the manual key is pressed, prioritize it.
-                // You might want to add a separate task/logic for manual vs auto.
-                // For simplicity, we'll let the auto-leveling logic below handle it if conditions are met.
-                // If you want manual to override, you'd put manual logic here and `return null;` after.
-            }
-            // --- Auto-leveling logic starts here ---
-            // Cancel current task if a UI panel is visible (like inventory)
-            if (!PanelVisible())
-            {
-                _gemLevelingCts?.Cancel();
-            }
-            // If all conditions are met and no leveling task is running, start one.
-            else if (CanTick() && IsPlayerAlive() && AnythingToLevel() && PanelVisible() && _gemLevelingTask == null)
-            {
+                _hotkeyGemLevelingCts?.Cancel();
+                _hotkeyGemLevelingCts?.Dispose();
+
+                _hotkeyGemLevelingCts = new CancellationTokenSource();
+                _hotkeyGemLevelingCts.CancelAfter(1000);
+
                 _mousePosition = Input.MousePositionNum;
-                _gemLevelingCts = new CancellationTokenSource();
-                _gemLevelingTask = Task.FromResult(BeginGemLevel(_gemLevelingCts.Token)).Unwrap();
-                _gemLevelingTask.ContinueWith((task) =>
+
+                _hotkeyGemLevelingTask = Task.Run(() => BeginGemLevel(_hotkeyGemLevelingCts.Token), _hotkeyGemLevelingCts.Token);
+                _hotkeyGemLevelingTask.ContinueWith((task) =>
                 {
-                    _gemLevelingTask = null;
-                    if (Settings.ReturnMouseToStart.Value) // Use your existing setting for mouse return
+                    _hotkeyGemLevelingTask = null;
+                    _hotkeyGemLevelingCts?.Dispose();
+                    if (Settings.ReturnMouseToStart.Value)
                     {
                         SetCursorPos(_mousePosition);
                     }
-                });
+                }, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.NotOnCanceled);
+
+                Input.KeyUp(Settings.Run.Value);
             }
 
             return null;
@@ -91,93 +111,29 @@ namespace SkillGems
         {
             var gemsToLvlUpElements = GetLevelableGems();
 
-            // Check if auto-leveling is still enabled before proceeding
-            if (!Settings.EnableAutoLevelUp.Value) return;
-
             if (!gemsToLvlUpElements.Any()) return;
 
             foreach (var gemElement in gemsToLvlUpElements)
             {
-                // Check for cancellation or if auto-leveling was disabled mid-loop
-                if (cancellationToken.IsCancellationRequested || !Settings.EnableAutoLevelUp.Value) return;
+                if (cancellationToken.IsCancellationRequested) return;
 
-                var elementToClick = gemElement.GetChildAtIndex(1); // Assuming the clickable element is always at index 1
+                var elementToClick = gemElement.GetChildAtIndex(1);
 
                 if (elementToClick == null || !elementToClick.IsVisible) continue;
 
-                var ActionDelay = Settings.DelayBetweenEachMouseEvent.Value;
-                var GemDelay = Settings.DelayBetweenEachGemClick.Value;
+                var actionDelay = Settings.DelayBetweenEachMouseEvent.Value;
+                var gemDelay = Settings.DelayBetweenEachGemClick.Value;
 
                 if (Settings.AddPingIntoDelay.Value)
                 {
-                    ActionDelay += GameController.IngameState.ServerData.Latency;
-                    GemDelay += GameController.IngameState.ServerData.Latency;
+                    actionDelay += GameController.IngameState.ServerData.Latency;
+                    gemDelay += GameController.IngameState.ServerData.Latency;
                 }
 
                 SetCursorPos(elementToClick);
-                await Task.Delay(ActionDelay, cancellationToken);
-                if (cancellationToken.IsCancellationRequested || !Settings.EnableAutoLevelUp.Value) return;
+                await Task.Delay(actionDelay, cancellationToken);
+                if (cancellationToken.IsCancellationRequested) return;
 
                 Input.LeftDown();
-                await Task.Delay(ActionDelay, cancellationToken);
-                if (cancellationToken.IsCancellationRequested || !Settings.EnableAutoLevelUp.Value) return;
-
-                Input.LeftUp();
-                await Task.Delay(GemDelay, cancellationToken);
-            }
-        }
-
-        private bool PanelVisible()
-        {
-            return !(GameController.Game.IngameState.IngameUi.InventoryPanel.IsVisible
-                     || GameController.Game.IngameState.IngameUi.Atlas.IsVisible
-                     || GameController.Game.IngameState.IngameUi.TreePanel.IsVisible
-                     || GameController.Game.IngameState.IngameUi.SyndicatePanel.IsVisible
-                     || GameController.Game.IngameState.IngameUi.OpenRightPanel.IsVisible
-                     || GameController.Game.IngameState.IngameUi.ChatTitlePanel.IsVisible
-                     || GameController.Game.IngameState.IngameUi.DelveWindow.IsVisible);
-        }
-
-        private bool CanTick()
-        {
-            return !GameController.IsLoading
-                   && GameController.Game.IngameState.ServerData.IsInGame
-                   && GameController.Player != null
-                   && GameController.Player.Address != 0
-                   && GameController.Player.IsValid
-                   && GameController.Window.IsForeground();
-        }
-
-        private bool IsPlayerAlive()
-        {
-            return GameController.Game.IngameState.Data.LocalPlayer.GetComponent<Life>().CurHP > 0;
-        }
-
-        private bool AnythingToLevel()
-        {
-            return GetLevelableGems().Any();
-        }
-
-        private List<Element> GetLevelableGems()
-        {
-            var gemsToLevelUp = new List<Element>();
-            var possibleGemsToLvlUpElements = GameController.IngameState.IngameUi?.GemLvlUpPanel?.GemsToLvlUp;
-
-            if (possibleGemsToLvlUpElements != null && possibleGemsToLvlUpElements.Any())
-            {
-                foreach (var possibleGemsToLvlUpElement in possibleGemsToLvlUpElements)
-                {
-                    foreach (var elem in possibleGemsToLvlUpElement.Children)
-                    {
-                        if (elem.Text?.Contains("Click to level") == true)
-                        {
-                            gemsToLevelUp.Add(possibleGemsToLvlUpElement);
-                            break;
-                        }
-                    }
-                }
-            }
-            return gemsToLevelUp;
-        }
-    }
-}
+                await Task.Delay(actionDelay, cancellationToken);
+                if (cancellationToken.IsCancellationRequested) return;
