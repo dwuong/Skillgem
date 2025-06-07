@@ -15,8 +15,8 @@ namespace SkillGems
         private CancellationTokenSource _autoGemLevelingCts;
         private Task _autoGemLevelingTask;
 
-        private CancellationTokenSource _hotkeyGemLevelingCts;
-        private Task _hotkeyGemLevelingTask;
+        private CancellationTokenSource _hotkeyLevelingCts; // This will be created on hotkey press
+        private Task _hotkeyLevelingTask; // This will hold the task for the hotkey press
 
         private Vector2 _mousePosition;
 
@@ -26,19 +26,36 @@ namespace SkillGems
             return true;
         }
 
-        public override void OnLoad()
+        public void Enable()
         {
+            // _autoGemLevelingCts should be initialized when the plugin is enabled
+            // and disposed when disabled or unloaded.
+            _autoGemLevelingCts = new CancellationTokenSource();
+        }
+
+        public void Disable()
+        {
+            // Cancel and dispose the continuous auto-leveling CTS
+            _autoGemLevelingCts?.Cancel();
+            _autoGemLevelingCts?.Dispose(); // Explicitly dispose here
+
+            // Also cancel and dispose any active hotkey task
+            _hotkeyLevelingCts?.Cancel();
+            _hotkeyLevelingCts?.Dispose();
         }
 
         public override void OnUnload()
         {
+            // Ensure all tasks are cancelled and disposed when the plugin unloads
+            // This is crucial for clean shutdown.
             _autoGemLevelingCts?.Cancel();
             _autoGemLevelingCts?.Dispose();
-            _autoGemLevelingTask?.Wait();
+            // Do NOT wait on _autoGemLevelingTask here. It might still be running.
+            // Let the game controller manage its shutdown or handle in Disable.
 
-            _hotkeyGemLevelingCts?.Cancel();
-            _hotkeyGemLevelingCts?.Dispose();
-            _hotkeyGemLevelingTask?.Wait();
+            _hotkeyLevelingCts?.Cancel();
+            _hotkeyLevelingCts?.Dispose();
+            // Do NOT wait on _hotkeyLevelingTask here. It might still be running.
         }
 
         private void SetCursorPos(Vector2 v)
@@ -53,55 +70,80 @@ namespace SkillGems
 
         public override Job Tick()
         {
+            // --- Continuous Auto-leveling Logic ---
             if (Settings.EnableAutoLevelUp.Value)
             {
+                // Conditions to start/continue continuous auto-leveling
                 if (CanTick() && IsPlayerAlive() && AnythingToLevel() && PanelVisible() && _autoGemLevelingTask == null)
                 {
-                    _mousePosition = Input.MousePositionNum;
-                    _autoGemLevelingCts = new CancellationTokenSource();
+                    _mousePosition = Input.MousePositionNum; // Save mouse position
+                    // Ensure a new CTS is created if we are starting a new continuous task
+                    if (_autoGemLevelingCts == null || _autoGemLevelingCts.IsCancellationRequested)
+                    {
+                        _autoGemLevelingCts?.Dispose(); // Dispose if cancelled but not null
+                        _autoGemLevelingCts = new CancellationTokenSource();
+                    }
+
                     _autoGemLevelingTask = Task.Run(() => BeginGemLevel(_autoGemLevelingCts.Token), _autoGemLevelingCts.Token);
                     _autoGemLevelingTask.ContinueWith((task) =>
                     {
+                        // Clean up the task reference and CTS after it completes or is cancelled
                         _autoGemLevelingTask = null;
-                        _autoGemLevelingCts?.Dispose();
+                        _autoGemLevelingCts?.Dispose(); // Dispose after task is done
+                        _autoGemLevelingCts = null; // Clear reference
                         if (Settings.ReturnMouseToStart.Value)
                         {
                             SetCursorPos(_mousePosition);
                         }
-                    }, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.NotOnCanceled);
+                    }, TaskContinuationOptions.None); // Use TaskContinuationOptions.None to always run, then check task.IsCanceled
                 }
                 else if (!CanTick() || !IsPlayerAlive() || !PanelVisible() || !AnythingToLevel())
                 {
+                    // If conditions are no longer met, cancel the continuous task
                     _autoGemLevelingCts?.Cancel();
                 }
             }
             else
             {
+                // If auto-leveling is disabled via settings, cancel any active task
                 _autoGemLevelingCts?.Cancel();
             }
 
+
+            // --- Hotkey-triggered 1-second Auto-leveling Logic ---
             if (Input.IsKeyDown(Settings.Run.Value))
             {
-                _hotkeyGemLevelingCts?.Cancel();
-                _hotkeyGemLevelingCts?.Dispose();
-
-                _hotkeyGemLevelingCts = new CancellationTokenSource();
-                _hotkeyGemLevelingCts.CancelAfter(1000);
-
-                _mousePosition = Input.MousePositionNum;
-
-                _hotkeyGemLevelingTask = Task.Run(() => BeginGemLevel(_hotkeyGemLevelingCts.Token), _hotkeyGemLevelingCts.Token);
-                _hotkeyGemLevelingTask.ContinueWith((task) =>
+                // If a hotkey task is already running OR has completed/been cancelled,
+                // and it's not null, ensure it's properly handled before starting a new one.
+                // This prevents trying to operate on a disposed CTS.
+                if (_hotkeyLevelingTask == null || _hotkeyLevelingTask.IsCompleted || _hotkeyLevelingTask.IsCanceled || _hotkeyLevelingTask.IsFaulted)
                 {
-                    _hotkeyGemLevelingTask = null;
-                    _hotkeyGemLevelingCts?.Dispose();
-                    if (Settings.ReturnMouseToStart.Value)
-                    {
-                        SetCursorPos(_mousePosition);
-                    }
-                }, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.NotOnCanceled);
+                    // Dispose the previous CTS if it exists and is no longer needed
+                    _hotkeyLevelingCts?.Dispose();
+                    _hotkeyLevelingCts = null; // Clear the reference
 
-                Input.KeyUp(Settings.Run.Value);
+                    _hotkeyLevelingCts = new CancellationTokenSource();
+                    _hotkeyLevelingCts.CancelAfter(1000); // 1000 milliseconds = 1 second duration
+
+                    _mousePosition = Input.MousePositionNum; // Save mouse position before starting
+
+                    _hotkeyLevelingTask = Task.Run(() => BeginGemLevel(_hotkeyLevelingCts.Token), _hotkeyLevelingCts.Token);
+                    _hotkeyLevelingTask.ContinueWith((task) =>
+                    {
+                        // Clean up the task reference and CTS after it completes or is cancelled
+                        _hotkeyLevelingTask = null;
+                        _hotkeyLevelingCts?.Dispose(); // Dispose after task is done
+                        _hotkeyLevelingCts = null; // Clear reference
+                        if (Settings.ReturnMouseToStart.Value)
+                        {
+                            SetCursorPos(_mousePosition);
+                        }
+                    }, TaskContinuationOptions.None); // Use TaskContinuationOptions.None to always run, then check task.IsCanceled
+
+                    // Keep this if you want a single trigger per key press (release and re-press needed)
+                    // Remove it if you want it to trigger every Tick while held down.
+                    Input.KeyUp(Settings.Run.Value);
+                }
             }
 
             return null;
@@ -115,6 +157,7 @@ namespace SkillGems
 
             foreach (var gemElement in gemsToLvlUpElements)
             {
+                // Always check for cancellation before and after delays/actions.
                 if (cancellationToken.IsCancellationRequested) return;
 
                 var elementToClick = gemElement.GetChildAtIndex(1);
@@ -131,9 +174,106 @@ namespace SkillGems
                 }
 
                 SetCursorPos(elementToClick);
-                await Task.Delay(actionDelay, cancellationToken);
+                // Use `await Task.Delay` with the provided cancellation token.
+                try
+                {
+                    await Task.Delay(actionDelay, cancellationToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    return; // Exit if cancelled during delay
+                }
+
                 if (cancellationToken.IsCancellationRequested) return;
 
                 Input.LeftDown();
-                await Task.Delay(actionDelay, cancellationToken);
+                try
+                {
+                    await Task.Delay(actionDelay, cancellationToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    return; // Exit if cancelled during delay
+                }
+
                 if (cancellationToken.IsCancellationRequested) return;
+
+                Input.LeftUp();
+                try
+                {
+                    await Task.Delay(gemDelay, cancellationToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    return; // Exit if cancelled during delay
+                }
+            }
+        }
+
+        private bool PanelVisible()
+        {
+            return !(GameController.Game.IngameState.IngameUi.InventoryPanel.IsVisible
+                     || GameController.Game.IngameState.IngameUi.Atlas.IsVisible
+                     || GameController.Game.IngameState.IngameUi.TreePanel.IsVisible
+                     || GameController.Game.IngameState.IngameUi.SyndicatePanel.IsVisible
+                     || GameController.Game.IngameState.IngameUi.OpenRightPanel.IsVisible
+                     || GameController.Game.IngameState.IngameUi.ChatTitlePanel.IsVisible
+                     || GameController.Game.IngameState.IngameUi.DelveWindow.IsVisible);
+        }
+
+        private bool CanTick()
+        {
+            return !GameController.IsLoading
+                   && GameController.Game.IngameState.ServerData.IsInGame
+                   && GameController.Player != null
+                   && GameController.Player.Address != 0
+                   && GameController.Player.IsValid
+                   && GameController.Window.IsForeground();
+        }
+
+        private bool IsPlayerAlive()
+        {
+            return GameController.Game.IngameState.Data.LocalPlayer.GetComponent<Life>().CurHP > 0;
+        }
+
+        private bool AnythingToLevel()
+        {
+            return GetLevelableGems().Any();
+        }
+
+        private List<Element> GetLevelableGems()
+        {
+            var gemsToLevelUp = new List<Element>();
+            var possibleGemsToLvlUpElements = GameController.IngameState.IngameUi?.GemLvlUpPanel?.GemsToLvlUp;
+
+            if (possibleGemsToLvlUpElements != null && possibleGemsToLvlUpElements.Any())
+            {
+                foreach (var possibleGemsToLvlUpElement in possibleGemsToLvlUpElements)
+                {
+                    bool foundClickText = false;
+                    if (possibleGemsToLvlUpElement.Text?.Contains("Click to level") == true)
+                    {
+                        foundClickText = true;
+                    }
+                    else
+                    {
+                        foreach (var elem in possibleGemsToLvlUpElement.Children)
+                        {
+                            if (elem.Text?.Contains("Click to level") == true)
+                            {
+                                foundClickText = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (foundClickText)
+                    {
+                        gemsToLevelUp.Add(possibleGemsToLvlUpElement);
+                    }
+                }
+            }
+            return gemsToLevelUp;
+        }
+    }
+}
